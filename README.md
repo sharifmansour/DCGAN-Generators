@@ -7,3 +7,5 @@ The following code is meant to recreate the outcome from the original deep convo
 - Provided file should be fine to run on it's own and can be run easily through Spyder (Python 3.6).
 - Please be mindful to update the folder path for the newly created images and training data. Begin by updating the folder location of the training data, then edit the location of the output images created.
 - Training data source will be provided for download.
+- Data can be downloaded at: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
+- Please download the align and cropped images.
