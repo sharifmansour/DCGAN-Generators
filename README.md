@@ -9,3 +9,4 @@ The following code is meant to recreate the outcome from the original deep convo
 - Training data source will be provided for download.
 - Data can be downloaded at: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
 - Please download the align and cropped images.
+- Also please make sure to download csv file indicating the attributes of the images.
