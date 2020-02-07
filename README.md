@@ -15,4 +15,5 @@ The following code is meant to recreate the outcome from the original deep convo
 - The following libraries will be needed to run the code:
      - "numpy"
      - "tensorflow"
-     - ""
+     - "pandas"
+     ...
