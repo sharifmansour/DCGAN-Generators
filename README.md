@@ -12,3 +12,5 @@ The following code is meant to recreate the outcome from the original deep convo
 - Also please make sure to download csv file indicating the attributes of the images.
 - The attributes are important as you will be able to select the desired attributes for the creation of the images.
 - In the code I've defaulted the attributes to be similar to that of the original DCGAN paper.
+- The following libraries will be needed to run the code:
+     - ""
