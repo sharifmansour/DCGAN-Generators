@@ -17,5 +17,5 @@ The following code is meant to recreate the outcome from the original deep convo
      - "tensorflow"
      - "pandas"
      - "matplotlib.pyplot"
-     
+     - "tensorflow.keras.layers"
      ...
