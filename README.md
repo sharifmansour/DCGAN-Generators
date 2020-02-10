@@ -23,4 +23,5 @@ The following code is meant to recreate the outcome from the original deep convo
      - "cv2" 
      - "time"
      - "numpy"
+     - "PIL"
      ...
