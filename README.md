@@ -16,7 +16,7 @@ The following code is meant to recreate the outcome from the original deep convo
 - Training time for 60x60 pixels is 60 hours. This is was run a on PC with the following specs: 
      - CPU:"i7-9750"
      - GPU:"NVIDIA GeForce RTX 2060"
-     - RAM:"16B"
+     - RAM:"16GB"
 - The following libraries will be needed to run the code:
      - "numpy"
      - "tensorflow"
