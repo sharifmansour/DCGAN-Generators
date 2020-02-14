@@ -13,7 +13,8 @@ The following code is meant to recreate the outcome from the original deep convo
 - The attributes are important as you will be able to select the desired attributes for the creation of the images.
 - In the code I've defaulted the attributes to be similar to that of the original DCGAN paper, however any attributes can be used.
 - Default image resolution produced is 60x60 pixels, this however can be changed.
-- Training time for 60x60 pixels is 60 hours.
+- Training time for 60x60 pixels is 60 hours. This is was run a on PC with the following specs: 
+     - CPU:"i7-9750" 
 - The following libraries will be needed to run the code:
      - "numpy"
      - "tensorflow"
