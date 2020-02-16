@@ -13,7 +13,8 @@ The following code is meant to recreate the outcome from the original deep convo
 - The attributes are important as you will be able to select the desired attributes for the creation of the images.
 - In the code I've defaulted the attributes to be similar to that of the original DCGAN paper, however any attributes can be used.
 - For now to use different attributes you'll need to manually update them in the correct locations in the code file.
-- The rest of the attributes can be found here: https://towardsdatascience.com/celeba-attribute-prediction-and-clustering-with-keras-3d148063098d
+- The rest of the attributes can be found here: https://towardsdatascience.com/celeba-attribute-prediction-and-clustering-with-keras-3d148063098d (Part of the code used to search the through the database can be found here.)
+
 - Default image resolution produced is 60x60 pixels, this however can be changed.
 - Training time for 60x60 pixels is 60 hours. This is was run a on PC with the following specs: 
      - CPU:"i7-9750"
