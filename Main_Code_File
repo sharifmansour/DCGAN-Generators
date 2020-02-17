@@ -1147,10 +1147,6 @@ if __name__ == '__main__':
     x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
     
     x_test = np.zeros((1,64,64,3))
-    
-    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Smiling_Woman/'
-    if not os.path.exists(folderName):
-        os.makedirs(folderName)
         
     imgWidth = 64
     imgHeight= 64
@@ -1309,10 +1305,6 @@ if __name__ == '__main__':
     x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
   
     x_test = np.zeros((1,64,64,3))
-    
-    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Neutral_Woman/'
-    if not os.path.exists(folderName):
-        os.makedirs(folderName)
         
     imgWidth = 64
     imgHeight= 64
@@ -1471,10 +1463,6 @@ if __name__ == '__main__':
     x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
     
     x_test = np.zeros((1,64,64,3))
-    
-    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Neutral_Man/'
-    if not os.path.exists(folderName):
-        os.makedirs(folderName)
         
     imgWidth = 64
     imgHeight= 64
@@ -1499,5 +1487,4 @@ if __name__ == '__main__':
     end_Overall_Time = time.time() - start_Overall_time    
     print('Completed time to run full Code completed in seconds:')   
     print(end_Overall_Time)
-    
     
