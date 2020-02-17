@@ -1,0 +1,1503 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Dec 7 11:57:42 2019
+
+@author: Sharif Mansour (500572387)
+@project: Exploring the Latent Space of DCGAN generators.
+@File: Main Code File
+
+Copyright - Code below has been either created or modified through ideas found on blog posts or Google Tensorflow documentation.
+
+"""
+
+from __future__ import absolute_import, division, print_function, unicode_literals
+
+import numpy as np
+# TensorFlow environment.
+import tensorflow as tf 
+import pandas as pd
+# Image creation.
+import matplotlib.pyplot as plt 
+#from ops import *
+#from tensorflow.layers import batch_normalization
+#from keras.layers.normalization import BatchNormalization
+from tensorflow.keras.layers import UpSampling2D
+# For the output folder containing the images.
+import os
+
+# For restarting session graphs.
+from tensorflow.python.framework import ops
+
+# For reading and using images.
+import cv2
+
+# For timing.
+import time
+
+# Required for Vector Arithmetic. 
+from numpy import asarray
+from PIL import Image
+from mtcnn.mtcnn import MTCNN
+    
+tf.compat.v1.disable_eager_execution()
+
+print('Current Version of TensorFlow Being Used:')
+print(tf.__version__)
+
+############# Used Google documentation to aid with creation. #######################
+
+# Collection of all the operations needed by the program.
+
+#Initialization of weights from a normal distribution of standard deviation of 0.2
+def init_weights(shape):
+    return tf.Variable(tf.compat.v1.random_normal(shape=shape, stddev=0.02))
+
+#Initialization of bias to, default a tensor of the provided shape where all elements are set to zero.
+def init_bias(shape):
+    return tf.Variable(tf.zeros(shape))
+  
+# Creation of convolutional layer.
+def conv2d(x, filter, strides, padding):
+    return tf.nn.conv2d(x, filter, strides=strides, padding=padding)
+
+# Creation of the cost function, here the sigmoid function is used for the output of the discriminator.
+# Here the sigmoid function is used because it determines whether the image being looked at is a real or fake image.
+# Since, the output of the sigmoid function has a range between 0 and 1, where a probability of below 0.5 is 
+# considered to be fake and an output above 0.5 is considered to be real.
+def cost(labels, logits):
+    return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
+  
+#####################################################################################
+############################ Reading images function ################################
+#####################################################################################
+ 
+def load_images_from_folder(folder):
+    images = []
+    for numImage, filename in enumerate(os.listdir(folder),start=0):
+        # numSamples is set below.
+        if numImage == numSamples:
+            break
+        org_img = np.array(cv2.imread(os.path.join(folder,filename)))
+        # Resizing to make each image the same size.
+        img = cv2.resize(org_img, dsize=(imgWidth, imgHeight), interpolation=cv2.INTER_CUBIC)
+        if img is not None:
+            images.append(img)
+    return np.array(images)
+  
+#####################################################################################
+############################ Saving images function #################################
+#####################################################################################  
+
+def save_Images(imgs, title, folderName):
+
+  # Scaling image values between 0 and 1 because currently they're between -1 to 1 which was scaled to 
+  # this at the beginning of script.
+  imgs = imgs*0.5 + 0.5
+        
+  # Plotting of the images.
+  fig= plt.figure(figsize=(10,5))
+  plt.imshow(imgs)
+               
+  # Saving images in the folder created earlier.         
+  fig.savefig(folderName + "_" + title + ".png")
+  
+#####################################################################################
+############################# Celeba Dataset Reading ##############################################
+## This was partially obtained online from the following github but was modified for our needs. ###  
+## https://github.com/tensorflow/datasets/blob/master/tensorflow_datasets/image/celeba.py #########  
+##################################################################################### #############
+    
+class CelebA():
+  def __init__(self, main='D:/Deep Learning/Final Project Datasets/Empirical Validation of DCGAN Capabilities/Celeba_Cropped_Align', selected_features =None, drop_features=[], remove_Features=[]):
+ 
+    self.main = main
+    self.images_folder   = os.path.join(main, 'img_celeba/')
+    self.attributes_path = os.path.join(main, 'list_attr_celeba.csv')
+    self.partition_path  = os.path.join(main, 'list_eval_partition.csv')    
+    
+    self.selected_features = selected_features
+    self.remove_Features = remove_Features
+    self.features_name = []
+    self.__Start(drop_features)
+
+  # Preparing the features to be used.
+  def __Start(self, drop_features):
+    # attributes:
+    if self.selected_features is None:
+      self.attributes = pd.read_csv(self.attributes_path)
+      self.num_features = 40
+    else:
+      self.num_features = len(self.selected_features)
+      self.selected_features = self.selected_features.copy()
+      self.remove_Features = self.remove_Features.copy()
+      print('\nisolated features:\n')
+      print(self.remove_Features)
+      
+      for i, val_i in enumerate(self.remove_Features, start=0):
+        self.selected_features.append(self.remove_Features[i])
+      
+      self.selected_features.append('image_id')
+      print('\nselected features\n')
+      print(self.selected_features)
+      self.attributes = pd.read_csv(self.attributes_path)[self.selected_features]
+      print('\nattributes\n')
+      print(self.attributes)
+
+    # Removing unwanted features:
+    for feature in drop_features:
+      if feature in self.attributes:    
+        self.attributes = self.attributes.drop(feature, axis=1)
+        self.num_features -= 1
+
+    self.attributes.set_index('image_id', inplace=True)
+    self.attributes.replace(to_replace=-1, value=0, inplace=True)
+    self.attributes['image_id'] = list(self.attributes.index)
+       
+    print('\nAttributes Round 2\n')
+    print(self.attributes)
+  
+    self.features_name = list(self.attributes.columns)[:-1]
+    
+    print('\nfeatures_name\n')
+    print(self.features_name)
+    
+    # load ideal partitioning:
+    self.partition = pd.read_csv(self.partition_path)
+    self.partition.set_index('image_id', inplace=True)
+    
+  
+  def split(self, name='training', drop_zero=False):
+    
+    self.partition = pd.read_csv(self.partition_path)
+    self.partition.set_index('image_id', inplace=True)
+    
+    ### Returning the ['training', 'validation', 'test'] split of the dataset. 
+    # select partition split:
+    if name == 'training':
+      to_drop = self.partition.where(lambda x: x != 0).dropna()
+    elif name == 'validation':
+      to_drop = self.partition.where(lambda x: x != 1).dropna()
+    elif name == 'test':  # test
+      to_drop = self.partition.where(lambda x: x != 2).dropna()
+    else:
+      raise ValueError('CelebA.split() => `name` must be one of [training, validation, test]')
+ 
+    partition = self.partition.drop(index=to_drop.index)
+    
+    global partition_test
+    partition_test = partition.join(self.attributes, how='inner')
+      
+    # join attributes with selected partition:
+    joint = partition.join(self.attributes, how='inner').drop('image_id', axis=1)
+     
+    print('\njoint\n')
+    print(joint)
+    
+    if drop_zero is True and self.remove_Features != []:
+      # select rows with all zeros values
+      new_joint = joint.loc[(joint[self.remove_Features] == 0).all(axis=1)]
+      print('\nFinal Returned Values: \n')
+      print(new_joint.loc[(new_joint[self.features_name] == 1).any(axis=1)])
+      # Returns all the features that don't have the removed features, so first look for unwanted features 
+      # (0 value) then for the features you want look for a value of 1 in those unwanted features.
+      return new_joint.loc[(new_joint[self.features_name] == 1).any(axis=1)]
+    elif drop_zero is True:
+      # Returns all the features where all the feature_names are 1
+      return joint.loc[(joint[self.features_name] == 1).all(axis=1)]
+    elif 0 <= drop_zero <= 1:
+      zero = joint.loc[(joint[self.features_name] == 0).all(axis=1)]
+      zero = zero.sample(frac=drop_zero)
+      return joint.drop(index=zero.index)
+ 
+    print(self.selected_features)
+    return joint
+
+  
+#####################################################################################
+################################## Discriminator ####################################
+############# Used Google documentation to aid with creation. #######################   
+#####################################################################################
+
+class Discriminator:
+    def __init__(self, img_shape):
+      
+        # Initializing all the weights and bias values for the discriminator.
+        # Variable scope is used so that we can differentiate the discriminator and generator.
+        self.img_rows, self.img_cols, self.channels = img_shape
+        with tf.compat.v1.variable_scope('d'):
+            print("Initializing discriminator weights")
+            
+            self.W1 = init_weights([5, 5, self.channels, dis_layers[0]])
+            self.b1 = init_bias([dis_layers[0]])
+            self.W2 = init_weights([3, 3, dis_layers[0], dis_layers[1]])
+            self.b2 = init_bias([dis_layers[1]])
+            self.W3 = init_weights([3, 3, dis_layers[1], dis_layers[2]])
+            self.b3 = init_bias([dis_layers[2]])
+            self.W4 = init_weights([2, 2, dis_layers[2], dis_layers[3]])
+            self.b4 = init_bias([dis_layers[3]])
+            self.W5 = init_weights([In_out_gen_dis[0]*In_out_gen_dis[1]*dis_layers[3], 1])
+            self.b5 = init_bias([1])
+            
+            print('\n Dis W1 shape: ')
+            print(self.W1.shape)
+            print(self.W1)
+            print('Dis W2 shape: ')
+            print(self.W2.shape)          
+            print('Dis W3 shape: ')
+            print(self.W3.shape)
+            print('Dis W4 shape: ')
+            print(self.W4.shape)  
+            print('Dis W5 shape: ')
+            print(self.W5.shape)
+           
+    
+    def forward(self, X, momentum=0.5):
+        # Creating the forward pass for the discriminator.
+        # A total of 4 convolutional layers was used in the discriminator.
+        # Instead of using pooling layers, a larger stride of 2 was used with the convolutional layers.
+        # This is done to reduce the image size. At the end of the discriminator 1 fully connected layer was used.
+        
+        global count
+        count = count + 1
+        
+        # Layer number 1.       
+        # The shape of the strides: [batch, height, width, channels]
+        # The size here is 14x14x64.          
+        X = tf.reshape(X, [-1, self.img_rows, self.img_cols, self.channels])
+        print('\n Dis X')
+        print(X.shape)
+        print(X)
+        
+        global weights1
+        #weights1 = np.array(np.append(weights1, np.array(self.W1)),int)
+        weights1.append(self.W1)
+        
+        z = conv2d(X, self.W1, strides=[2, 2], padding="SAME")      
+        # Adding the bias.
+        z = tf.nn.bias_add(z, self.b1)
+        # The Activation function used by the discriminator (leaky_relu), slope set to 0.2.
+        z = tf.nn.leaky_relu(z, alpha=0.2)
+        
+        print('Dis Z1')
+        print(z.shape)       
+        layer1.append(z)
+        
+        # Layer number 2.
+        # The size here is 14x14x64.          
+        z = conv2d(z, self.W2, strides=[1, 1], padding="SAME")
+        z = tf.nn.bias_add(z, self.b2)
+        # Batch normalization with a momentum of 0.5.
+        z = tf.compat.v1.layers.batch_normalization(z, momentum=momentum)
+        z = tf.nn.leaky_relu(z, alpha=0.2)
+
+        print('Dis Z2')
+        print(z.shape) 
+        layer2.append(z)
+        
+        # Layer number 3.
+        # The size here is 7x7x128.
+        z = conv2d(z, self.W3, strides=[2, 2], padding="SAME")
+        z = tf.nn.bias_add(z, self.b3)
+        z = tf.compat.v1.layers.batch_normalization(z, momentum=momentum)
+        z = tf.nn.leaky_relu(z, alpha=0.2)
+
+        print('Dis Z3')
+        print(z.shape) 
+        layer3.append(z)
+        
+        # Layer number 4.
+        # The size here is 7x7x256.
+        z = conv2d(z, self.W4, strides=[1, 1], padding="SAME")
+        z = tf.nn.bias_add(z, self.b4)
+        z = tf.compat.v1.layers.batch_normalization(z, momentum=momentum)
+        z = tf.nn.leaky_relu(z, alpha=0.2)
+        #print(z.shape)
+
+        print('Dis Z4')
+        print(z.shape) 
+        layer4.append(z)
+      
+        # The fully connected layer, flattening of image.
+        z = tf.reshape(z, [-1, In_out_gen_dis[0]*In_out_gen_dis[1]*dis_layers[3]])
+        
+        print('Dis Z5')
+        print(z.shape) 
+        
+        logits = tf.matmul(z, self.W5)
+        logits = tf.nn.bias_add(logits, self.b5)
+        
+        print('\n logits')
+        print(logits.shape)
+        print(logits)
+        
+        ##### Weights Testing
+        
+        print('\n Weights Testing:')
+        print('W1')
+        print(self.W1.shape)
+        print('W2')
+        print(self.W2.shape)        
+        print('W3')
+        print(self.W3.shape)
+        print('W4')
+        print(self.W4.shape)
+        
+        # No activation function was needed because the cost function (above) included it. 
+        return logits
+      
+#####################################################################################
+################################## Generator ########################################
+############# Used Google documentation to aid with creation. #######################        
+#####################################################################################
+
+class Generator:
+    def __init__(self, img_shape, batch_size):
+         
+        self.img_rows, self.img_cols, self.channels = img_shape
+        self.batch_size = batch_size
+        with tf.compat.v1.variable_scope('g'):
+            print("Initializing generator weights")
+            global gen_weight_state
+            global genWeights
+            if  gen_weight_state == 'yes':
+              self.W1 = (np.array(genWeights))[0]
+              self.W2 = (np.array(genWeights))[1]
+              self.W3 = (np.array(genWeights))[2]
+              self.W4 = (np.array(genWeights))[3]
+              print('New Generator Weights')
+            # The input shape = 100 dimensional uniform distribution vector.
+            if gen_weight_state == 'no':
+              self.W1 = init_weights([100, In_out_gen_dis[0]*In_out_gen_dis[1]*gen_layers[0]])
+              self.W2 = init_weights([3, 3, gen_layers[0], gen_layers[1]])
+              self.W3 = init_weights([3, 3, gen_layers[1], gen_layers[2]])
+              self.W4 = init_weights([3, 3, gen_layers[2], gen_layers[3]])
+            
+            print('\n Gen W1 shape: ')
+            print(self.W1.shape)
+            print('Gen W2 shape: ')
+            print(self.W2.shape)          
+            print('Gen W3 shape: ')
+            print(self.W3.shape)
+            print('Gen W4 shape: ')
+            print(self.W4.shape)  
+            
+
+    def forward(self, X, momentum=0.5):
+        print('\n Gen X')
+        print(X.shape)
+        print(X)
+        z = tf.matmul(X, self.W1)
+        z = tf.nn.relu(z)
+        # Reshaping to a 4-D tensor
+        z = tf.reshape(z, [-1, In_out_gen_dis[0], In_out_gen_dis[1], gen_layers[0]])
+
+        print('Gen Z1')
+        print(z.shape)           
+        
+        # Using the UpSampling2D function to increase the image size at this given layer.
+        z = UpSampling2D()(z)
+        
+        print('Upsample Gen Z2:')
+        print(z.shape)     
+        
+        z = conv2d(z, self.W2, strides=[1, 1], padding="SAME")
+        z = tf.compat.v1.layers.batch_normalization(z, momentum=momentum)
+        #### Possibly should use instead the just the regular ReLU activation function?
+        z = tf.nn.relu(z)
+
+        print('Gen Z2')
+        print(z.shape)   
+
+        z = UpSampling2D()(z)
+        z = conv2d(z, self.W3, strides=[1, 1], padding="SAME") 
+        z = tf.compat.v1.layers.batch_normalization(z, momentum=momentum)
+        #### Possibly should use instead the just the regular ReLU activation function?
+        z = tf.nn.relu(z)
+
+        print('Gen Z3')
+        print(z.shape)  
+        
+        z = conv2d(z, self.W4, strides=[1, 1], padding="SAME") 
+        
+        print('Gen Z4')
+        print(z.shape)  
+        
+        print('tf.nn.tanh(z)')
+        print((tf.nn.tanh(z)).shape)
+
+        # The final layer utilized a tanh function (values in the range of -1 to 1) because this function was
+        # able to sturate more quickly and cover the colour space better than other functions used.
+        return tf.nn.tanh(z)
+
+#####################################################################################
+################################## DCGAN ### ########################################
+############# Used Google documentation to aid with creation. #######################        
+#####################################################################################
+  
+class DCGAN:
+    def __init__(self, img_shape, epochs=50000, lr_gen=0.0002, lr_disc=0.0002, z_shape=100, batch_size=128, beta1=0.5, epochs_for_sample=500, FT='none'):
+        
+        # Epochs = the number of training cycles used in the model. 
+        # lr_gen = is the learning rate used by the Adam Optimizer in the generator.
+        # lr_dc = is the learning rate used by the Adam Optimizer in the discriminator.
+        # z_shape = is the shape of the image used in the generator input.
+        # batch_size = is the batch size used when training the model.
+        # epochs_for_sample = training iterations per sample image.
+        
+        self.rows, self.cols, self.channels = img_shape
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.z_shape = z_shape
+        self.epochs_for_sample = epochs_for_sample
+        self.generator = Generator(img_shape, self.batch_size)
+        self.discriminator = Discriminator(img_shape)
+        self.FaceT = FT
+        
+        # There's no reason to differentiate between the training and test data. 
+        
+        X = np.concatenate([x_train, x_test])
+        
+        # Images are represented between values of 0 and 255. 
+        # The images however need to be scaled between the values of -1 and 1 for the tanh function to work as
+        # intended. 
+        self.X = X / 127.5 - 1 # Scale between -1 and 1
+        # Creating placeholders for the input values. 
+        self.X_Tensor = tf.compat.v1.placeholder(tf.float32, [batch_size, self.rows, self.cols, self.channels])
+        self.Z_Tensor = tf.compat.v1.placeholder(tf.float32, [None, self.z_shape])
+        
+        print('\nself.Z_Tensor')
+        print(self.Z_Tensor)
+        
+        # The forward pass done for the generator.
+        self.gen_output = self.generator.forward(self.Z_Tensor)
+        
+        print('\self.gen_output')
+        print(self.gen_output)
+
+        # The real and fake predictions done by the discriminator.
+        # Here is the fake image produced by the generator.
+        fake = self.discriminator.forward(self.gen_output)
+        # Here is the real image.
+        real = self.discriminator.forward(self.X_Tensor)  
+        
+        # For SVM classifier
+        global SVMcheck
+        global SVM_Vector
+        if SVMcheck == 1:
+          print('Hi')
+                      
+        # The cost function with respect to the fake image created. (fake images should have an output of 0 from
+        # the discriminator.)
+        d_fake_loss = cost(tf.zeros_like(fake), fake)
+        # The cost function with respect to the real image created. (real images should have an output of 1 from
+        # the discriminator.)       
+        d_real_loss = cost(tf.ones_like(real), real)
+        
+        self.d_loss = tf.add(d_fake_loss, d_real_loss)
+        # The generator tries to fool the discriminator so that the discriminator outputs 1 for fake images.
+        self.g_loss = cost(tf.ones_like(fake), fake)
+
+        # Adding new trainable variables.
+        train_vars = tf.compat.v1.trainable_variables()
+
+        # Differentiating between the generator and discriminator variables.
+        disc_vars = [var for var in train_vars if 'd' in var.name]
+        gen_vars = [var for var in train_vars if 'g' in var.name]
+        
+        self.dis_weights = disc_vars
+        self.gen_weights = gen_vars
+
+        # Using the adam optimizer on the generator and discriminator variables for convergence.
+        self.d_train = tf.compat.v1.train.AdamOptimizer(lr_disc,beta1=beta1).minimize(self.d_loss, var_list=disc_vars)
+        self.g_train = tf.compat.v1.train.AdamOptimizer(lr_gen, beta1=beta1).minimize(self.g_loss, var_list=gen_vars)
+               
+    def train(self):
+        init = tf.compat.v1.global_variables_initializer()
+        self.sess = tf.compat.v1.Session()
+        #Initialize all the variables.
+        self.sess.run(init)
+        
+        # Starting the training process.
+        for i in range(self.epochs):
+            # Creating random batch of images from the dataset for the training
+            # The random indices are selected from 0 to a number equal to the number of images in the dataset.
+            index = np.random.randint(0, len(self.X), self.batch_size)
+            batch_Image = self.X[index]
+            
+            # Creating the latent vector from a random uniform distribution.
+            batch_Latent = np.random.uniform(-1, 1, (self.batch_size, self.z_shape))
+            
+            # Training the discriminator and storing it's loss.    
+            _, d_loss, d_var = self.sess.run([self.d_train, self.d_loss, self.dis_weights], feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            # Creating a new batch and latent vector from a random uniform distribution for the generator training. 
+            batch_Latent = np.random.uniform(-1, 1, (self.batch_size, self.z_shape))
+            # Training the generator and storing it's loss.
+            _, g_loss, g_var = self.sess.run([self.g_train, self.g_loss, self.gen_weights], feed_dict={self.Z_Tensor: batch_Latent})
+            
+            global latent_Vector            
+            latent_Vector = np.array(np.append(latent_Vector,batch_Latent, axis=0))
+            
+            # Generating the samples and displaying the loss for both the generator and discriminator.
+            if i % self.epochs_for_sample == 0:
+                self.generate_sample(i)
+                print('Batch')
+                print(batch_Latent.shape)
+                print(f"Epoch: {i}. Discriminator loss: {d_loss}. Generator loss: {g_loss}")
+            
+            
+            convLayer1 = self.sess.run(layer1, feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            global arrayLayer1
+            arrayLayer1 = np.array(convLayer1)
+            
+            convLayer2 = self.sess.run(layer2, feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            global arrayLayer2
+            arrayLayer2 = np.array(convLayer2)
+            
+            convLayer3 = self.sess.run(layer3, feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            global arrayLayer3
+            arrayLayer3 = np.array(convLayer3)
+            
+            convLayer4 = self.sess.run(layer4, feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            global arrayLayer4
+            arrayLayer4 = np.array(convLayer4)
+            
+            
+            ################## Weights array ##################
+            
+            global weights1
+            global weights_arrayLayer1
+            weightsLayer1 = self.sess.run(weights1, feed_dict={self.X_Tensor:batch_Image, self.Z_Tensor:batch_Latent})
+            weights_arrayLayer1 = np.array(weightsLayer1)
+            
+            global discrWeights
+            discrWeights = d_var
+            
+            global genWeights
+            genWeights = g_var
+            
+            ##### Export Folder Location #####
+            
+            folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Smiling_Man_Vector_Arithmetic/'
+            if not os.path.exists(folderName):
+              os.makedirs(folderName)  
+            
+            ################## Printing ##################
+            if(i+1 == self.epochs):
+              if self.FaceT == 'Smiling_Woman':
+                print(self.FaceT)
+                #Grabbing tensor of images 
+                z = latent_Vector[latent_Vector.shape[0]-3,:].reshape(1,100)
+                img_latent_Vector_Smiling_Woman_1 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-2,:].reshape(1,100)
+                img_latent_Vector_Smiling_Woman_2 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-1,:].reshape(1,100)
+                img_latent_Vector_Smiling_Woman_3 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = ((latent_Vector[latent_Vector.shape[0]-3,:] + latent_Vector[latent_Vector.shape[0]-2,:] + latent_Vector[latent_Vector.shape[0]-1,:])/3).reshape(1,100)
+                latent_Vector_Smiling_Woman_Avg = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                global latent_Vector_SW 
+                latent_Vector_SW = z
+
+                img_latent_Vector_Smiling_Woman_1_np= np.squeeze(img_latent_Vector_Smiling_Woman_1)
+                img_latent_Vector_Smiling_Woman_2_np= np.squeeze(img_latent_Vector_Smiling_Woman_2)
+                img_latent_Vector_Smiling_Woman_3_np = np.squeeze(img_latent_Vector_Smiling_Woman_3)
+                latent_Vector_Smiling_Woman_Avg_np = np.squeeze(latent_Vector_Smiling_Woman_Avg)
+                  
+                save_Images(img_latent_Vector_Smiling_Woman_1_np, 'Smiling_Woman_1', folderName)
+                save_Images(img_latent_Vector_Smiling_Woman_2_np, 'Smiling_Woman_2', folderName)
+                save_Images(img_latent_Vector_Smiling_Woman_3_np, 'Smiling_Woman_3', folderName)
+                save_Images(latent_Vector_Smiling_Woman_Avg_np, 'Smiling_Woman_Avg', folderName)
+              
+              if self.FaceT == 'Netural_Woman':
+                print(self.FaceT)
+                
+                #Grabbing tensor of images 
+                z = latent_Vector[latent_Vector.shape[0]-3,:].reshape(1,100)
+                img_latent_Vector_Neutral_Woman_1 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-2,:].reshape(1,100)
+                img_latent_Vector_Neutral_Woman_2 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-1,:].reshape(1,100)
+                img_latent_Vector_Neutral_Woman_3 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = ((latent_Vector[latent_Vector.shape[0]-3,:] + latent_Vector[latent_Vector.shape[0]-2,:] + latent_Vector[latent_Vector.shape[0]-1,:])/3).reshape(1,100)
+                img_latent_Vector_Neutral_Woman_Avg = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                global latent_Vector_NW
+                latent_Vector_NW = z
+
+                img_latent_Vector_Neutral_Woman_1_np= np.squeeze(img_latent_Vector_Neutral_Woman_1)
+                img_latent_Vector_Neutral_Woman_2_np= np.squeeze(img_latent_Vector_Neutral_Woman_2)
+                img_latent_Vector_Neutral_Woman_3_np = np.squeeze(img_latent_Vector_Neutral_Woman_3)
+                img_latent_Vector_Neutral_Woman_Avg_np = np.squeeze(img_latent_Vector_Neutral_Woman_Avg)
+                  
+                save_Images(img_latent_Vector_Neutral_Woman_1_np, 'Neutral_Woman_1', folderName)
+                save_Images(img_latent_Vector_Neutral_Woman_2_np, 'Neutral_Woman_2', folderName)
+                save_Images(img_latent_Vector_Neutral_Woman_3_np, 'Neutral_Woman_3', folderName)
+                save_Images(img_latent_Vector_Neutral_Woman_Avg_np, 'Neutral_Woman_Avg', folderName)
+                
+              if self.FaceT == 'Netural_Man':
+                print(self.FaceT)
+                
+                                #Grabbing tensor of images 
+                z = latent_Vector[latent_Vector.shape[0]-3,:].reshape(1,100)
+                img_latent_Vector_Neutral_Man_1 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-2,:].reshape(1,100)
+                img_latent_Vector_Neutral_Man_2 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = latent_Vector[latent_Vector.shape[0]-1,:].reshape(1,100)
+                img_latent_Vector_Neutral_Man_3 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                z = ((latent_Vector[latent_Vector.shape[0]-3,:] + latent_Vector[latent_Vector.shape[0]-2,:] + latent_Vector[latent_Vector.shape[0]-1,:])/3).reshape(1,100)
+                img_latent_Vector_Neutral_Man_Avg = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+                
+                global latent_Vector_NM
+                latent_Vector_NM = z
+
+                img_latent_Vector_Neutral_Man_1_np= np.squeeze(img_latent_Vector_Neutral_Man_1)
+                img_latent_Vector_Neutral_Man_2_np= np.squeeze(img_latent_Vector_Neutral_Man_2)
+                img_latent_Vector_Neutral_Man_3_np = np.squeeze(img_latent_Vector_Neutral_Man_3)
+                img_latent_Vector_Neutral_Man_Avg_np = np.squeeze(img_latent_Vector_Neutral_Man_Avg)
+                  
+                save_Images(img_latent_Vector_Neutral_Man_1_np, 'Neutral_Man_1', folderName)
+                save_Images(img_latent_Vector_Neutral_Man_2_np, 'Neutral_Man_2', folderName)
+                save_Images(img_latent_Vector_Neutral_Man_3_np, 'Neutral_Man_3', folderName)
+                save_Images(img_latent_Vector_Neutral_Man_Avg_np, 'Neutral_Man_Avg', folderName)
+                
+                ### Arithmetic Operations Conducted
+                
+                global glo_latent_Vector_SW
+                global glo_latent_Vector_NW
+                print("\nlatent_Vector_SW\n")
+                print(glo_latent_Vector_SW)
+                print("\nlatent_Vector_NW\n")
+                print(glo_latent_Vector_NW)
+                
+                
+                ################################################################################################################################
+                # smiling woman - netural woman + neutral man = smiling man
+                ###############################################################################################################################
+                
+                latent_Vector_SM1 = glo_latent_Vector_SW - glo_latent_Vector_NW + latent_Vector_NM
+                img_latent_Vector_Smiling_Man1 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM1})
+                img_latent_Vector_Smiling_Man_np1 = np.squeeze(img_latent_Vector_Smiling_Man1)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np1, 'Operation1', folderName)
+                
+                ###############################################################################################################################
+                # smiling woman + netural woman - neutral man 
+                ###############################################################################################################################
+                
+                latent_Vector_SM2 = glo_latent_Vector_SW + glo_latent_Vector_NW - latent_Vector_NM
+                img_latent_Vector_Smiling_Man2 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM2})
+                img_latent_Vector_Smiling_Man_np2 = np.squeeze(img_latent_Vector_Smiling_Man2)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np2, 'Operation2', folderName)
+                
+                ###############################################################################################################################
+                # smiling woman + netural woman + neutral man
+                ###############################################################################################################################
+                
+                latent_Vector_SM3 = glo_latent_Vector_SW + glo_latent_Vector_NW + latent_Vector_NM
+                img_latent_Vector_Smiling_Man3 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM3})
+                img_latent_Vector_Smiling_Man_np3 = np.squeeze(img_latent_Vector_Smiling_Man3)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np3, 'Operation3', folderName)
+                
+                ###############################################################################################################################
+                # smiling woman - netural woman - neutral man
+                ###############################################################################################################################
+                
+                latent_Vector_SM4 = glo_latent_Vector_SW - glo_latent_Vector_NW - latent_Vector_NM
+                img_latent_Vector_Smiling_Man4 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM4})
+                img_latent_Vector_Smiling_Man_np4 = np.squeeze(img_latent_Vector_Smiling_Man4)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np4, 'Operation4', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) - (netural woman * -1) + (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM5 = (glo_latent_Vector_SW * -1) - (glo_latent_Vector_NW * -1) + (latent_Vector_NM * -1)
+                img_latent_Vector_Smiling_Man5 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM5})
+                img_latent_Vector_Smiling_Man_np5 = np.squeeze(img_latent_Vector_Smiling_Man5)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np5, 'Operation5', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) + (netural woman * -1) - (neutral man * -1) 
+                ###############################################################################################################################
+                
+                latent_Vector_SM6 = (glo_latent_Vector_SW * -1) + (glo_latent_Vector_NW * -1)  - (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man6 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM6})
+                img_latent_Vector_Smiling_Man_np6 = np.squeeze(img_latent_Vector_Smiling_Man6)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np6, 'Operation6', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) + (netural woman * -1) + (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM7 = (glo_latent_Vector_SW * -1)  + (glo_latent_Vector_NW * -1)  + (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man7 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM7})
+                img_latent_Vector_Smiling_Man_np7 = np.squeeze(img_latent_Vector_Smiling_Man7)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np7, 'Operation7', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) - (netural woman * -1) - (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM8 = (glo_latent_Vector_SW * -1)  - (glo_latent_Vector_NW * -1)  - (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man8 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM8})
+                img_latent_Vector_Smiling_Man_np8 = np.squeeze(img_latent_Vector_Smiling_Man8)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np8, 'Operation8', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) - (netural woman) + (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM9 = (glo_latent_Vector_SW * -1)  - glo_latent_Vector_NW + latent_Vector_NM
+                img_latent_Vector_Smiling_Man9 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM9})
+                img_latent_Vector_Smiling_Man_np9 = np.squeeze(img_latent_Vector_Smiling_Man9)  
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np9, 'Operation9', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) + (netural woman) - (neutral man) 
+                ###############################################################################################################################
+                
+                latent_Vector_SM10 = (glo_latent_Vector_SW * -1)  + glo_latent_Vector_NW - latent_Vector_NM
+                img_latent_Vector_Smiling_Man10 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM10})
+                img_latent_Vector_Smiling_Man_np10 = np.squeeze(img_latent_Vector_Smiling_Man10)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np10, 'Operation10', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) + (netural woman) + (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM11 = (glo_latent_Vector_SW * -1) + glo_latent_Vector_NW + latent_Vector_NM
+                img_latent_Vector_Smiling_Man11 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM11})
+                img_latent_Vector_Smiling_Man_np11 = np.squeeze(img_latent_Vector_Smiling_Man11)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np11, 'Operation11', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman * -1) - (netural woman) - (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM12 = (glo_latent_Vector_SW * -1)  - glo_latent_Vector_NW - latent_Vector_NM
+                img_latent_Vector_Smiling_Man12 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM12})
+                img_latent_Vector_Smiling_Man_np12 = np.squeeze(img_latent_Vector_Smiling_Man12)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np12, 'Operation12', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) - (netural woman * -1) + (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM13 = glo_latent_Vector_SW - (glo_latent_Vector_NW * -1) + latent_Vector_NM
+                img_latent_Vector_Smiling_Man13 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM13})
+                img_latent_Vector_Smiling_Man_np13 = np.squeeze(img_latent_Vector_Smiling_Man13)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np13, 'Operation13', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) + (netural woman * -1) - (neutral man) 
+                ###############################################################################################################################
+                
+                latent_Vector_SM14 = glo_latent_Vector_SW + (glo_latent_Vector_NW * -1)  - latent_Vector_NM
+                img_latent_Vector_Smiling_Man14 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM14})
+                img_latent_Vector_Smiling_Man_np14 = np.squeeze(img_latent_Vector_Smiling_Man14)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np14, 'Operation14', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) + (netural woman * -1) + (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM15 = glo_latent_Vector_SW + (glo_latent_Vector_NW * -1)  + latent_Vector_NM
+                img_latent_Vector_Smiling_Man15 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM15})
+                img_latent_Vector_Smiling_Man_np15 = np.squeeze(img_latent_Vector_Smiling_Man15)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np15, 'Operation15', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) - (netural woman * -1) - (neutral man)
+                ###############################################################################################################################
+                
+                latent_Vector_SM16 = glo_latent_Vector_SW - (glo_latent_Vector_NW * -1)  - latent_Vector_NM
+                img_latent_Vector_Smiling_Man16 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM16})
+                img_latent_Vector_Smiling_Man_np16 = np.squeeze(img_latent_Vector_Smiling_Man16)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np16, 'Operation16', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) - (netural woman) + (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM17 = glo_latent_Vector_SW - glo_latent_Vector_NW + (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man17 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM17})
+                img_latent_Vector_Smiling_Man_np17 = np.squeeze(img_latent_Vector_Smiling_Man17)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np17, 'Operation17', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) + (netural woman) - (neutral man * -1) 
+                ###############################################################################################################################
+                
+                latent_Vector_SM18 = glo_latent_Vector_SW + glo_latent_Vector_NW - (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man18 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM18})
+                img_latent_Vector_Smiling_Man_np18 = np.squeeze(img_latent_Vector_Smiling_Man18)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np18, 'Operation18', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) + (netural woman) + (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM19 = glo_latent_Vector_SW + glo_latent_Vector_NW + (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man19 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM19})
+                img_latent_Vector_Smiling_Man_np19 = np.squeeze(img_latent_Vector_Smiling_Man19)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np19, 'Operation19', folderName)
+                
+                ###############################################################################################################################
+                # (smiling woman) - (netural woman) - (neutral man * -1)
+                ###############################################################################################################################
+                
+                latent_Vector_SM20 = glo_latent_Vector_SW - glo_latent_Vector_NW - (latent_Vector_NM * -1) 
+                img_latent_Vector_Smiling_Man20 = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:latent_Vector_SM20})
+                img_latent_Vector_Smiling_Man_np20 = np.squeeze(img_latent_Vector_Smiling_Man20)
+                  
+                save_Images(img_latent_Vector_Smiling_Man_np20, 'Operation20', folderName)
+                
+                             
+                
+        self.sess.close()
+        ops.reset_default_graph()
+
+    def generate_sample(self, epoch):
+        # 5 samples per image
+        width = 5
+        height = 5
+        # New input for each of the samples, in total 49 images (7x7)
+        z = np.random.uniform(-1, 1, (self.batch_size, self.z_shape))
+        imgs = self.sess.run(self.gen_output, feed_dict={self.Z_Tensor:z})
+        # Scaling image values between 0 and 1 because currently they're between -1 to 1 which was scaled to 
+        # this at the beginning of script.
+        imgs = imgs*0.5 + 0.5
+        
+        # Plotting of the images.
+        fig, axs = plt.subplots(width, height, figsize=(12,8))
+        cnt = 0
+        for i in range(width):
+            for j in range(height):
+                axs[i, j].imshow(imgs[cnt, :, :, :])
+                axs[i, j].axis('off')
+                cnt += 1
+               
+        # Saving images in the folder created earlier.         
+        fig.savefig(folderName + "%d.png" % epoch)
+        plt.close()
+        
+if __name__ == '__main__':
+  
+    #####################################################################################
+    #####################################################################################
+    #####################################################################################
+    
+    # SVM check will be used later on.
+    
+    SVMcheck = 0
+    gen_weight_state = 'no'
+    latent_Vector = np.ones((1,100))
+    
+    imgWidth = 256
+    imgHeight= 256
+    
+    # Size of generator and discriminator layers. 
+
+    dis_layers = [64,64,128,256]
+    gen_layers = [512,256,128,3]
+    
+    #Used to make sure the image width/height is divisible by In_out_gen_dis[0]* In_out_gen_dis[1] * dis_layers[3] AND In_out_gen_dis[0]* In_out_gen_dis[1] * gen_layers[0]. 
+    # For example, 8*8*256 = 16384 and then 16384 / 32 = 512. Also to need to make sure that image width/height is divisible by In_out_gen_dis[0] or In_out_gen_dis[1].
+    # 32x32 works with 8,8
+    In_out_gen_dis = [8,8,512]
+    
+    # Determining the new image size.
+    imgWidth = 256
+    imgHeight= 256
+    
+    center_crop_Width = 32
+    center_crop_Height = 32
+    
+    center_crop_Width_Start = int(((imgWidth/2) - (center_crop_Width/2)) -1)
+    center_crop_Width_End = int(((imgWidth/2) + (center_crop_Width/2)) -1)
+    center_crop_Height_Start = int(((imgHeight/2) - (center_crop_Height/2)) -1)
+    center_crop_Height_End = int(((imgHeight/2) + (center_crop_Height/2)) -1) 
+    
+    start_Overall_time = time.time() 
+    
+    count=0
+    
+    layer1 = []
+    layer2 = []
+    layer3 = []
+    layer4 = []
+
+    arrayLayer1 = []
+    arrayLayer2 = []
+    arrayLayer3 = []
+    arrayLayer4 = []
+    
+    weights1 = []
+    weights2 = []
+    weights3 = []
+    weights4 = []
+    weights5 = []
+    
+    weights_arrayLayer1 = []
+    weights_arrayLayer2 = []
+    weights_arrayLayer3 = []
+    weights_arrayLayer4 = []
+    weights_arrayLayer5 = []
+    
+    discrWeights =[]
+    genWeights =[]
+    
+    # Global Variables
+    Train_Sample_Size = 10000
+    Test_Sample_Size = 1000 
+    Global_Epoch = 15000
+       
+    latent_Vector_SW = np.ones((1,100))
+    latent_Vector_NW = np.ones((1,100))
+    latent_Vector_NM = np.ones((1,100))
+    
+    #####################################################################################
+    ############################### Celeba Dataset ######################################
+    #####################################################################################    
+
+    ################################## Experiement 1 ####################################
+    ######### Experiment 1 (using attributes- 'Heavy_Makeup','Male','Smiling'): #########
+    ############ smiling woman - netural woman + neutral man = smiling man ##############
+    #####################################################################################
+
+    ### Defaulting the size of layers to for 64X64 images.
+    
+    # Size of generator and discriminator layers. 
+
+    dis_layers = [64,64,128,256]
+    gen_layers = [512,256,128,3]
+    
+    #Used to make sure the image width/height is divisible by In_out_gen_dis[0]* In_out_gen_dis[1] * dis_layers[3] AND In_out_gen_dis[0]* In_out_gen_dis[1] * gen_layers[0]. 
+    # For example, 8*8*256 = 16384 and then 16384 / 32 = 512. Also to need to make sure that image width/height is divisible by In_out_gen_dis[0] or In_out_gen_dis[1].
+    # 32x32 works with 8,8
+    In_out_gen_dis = [16,16,512]
+    
+    #####################################################################################
+    ############################### Smiling Woman #######################################
+    #####################################################################################
+    
+    layer1 = []
+    layer2 = []
+    layer3 = []
+    layer4 = []
+    
+    weights1 = []
+    weights2 = []
+    weights3 = []
+    weights4 = []
+    weights5 = []
+    
+    weights_arrayLayer1 = []
+    weights_arrayLayer2 = []
+    weights_arrayLayer3 = []
+    weights_arrayLayer4 = []
+    weights_arrayLayer5 = []
+    
+    count=0
+    
+    discrWeights =[]
+    genWeights =[]
+  
+    # Total time to run on Celeba Dataset.
+    start = time.time()   
+    
+    #####################################################################################
+    ######################### Folder containing celeba data #############################
+    ######################### Please use full folder path ###############################
+        
+    folder = 'D:/Deep Learning/Final Project Datasets/Empirical Validation of DCGAN Capabilities/Celeba_Cropped_Align/img_celeba'    
+    
+    #####################################################################################
+    #####################################################################################
+   
+    faceType = 'Smiling_Woman'
+    celeba = CelebA(selected_features=['Smiling', 'Heavy_Makeup'], remove_Features=['Male'])
+
+    #####################################################################################
+    #####################################################################################
+    
+    partition_test=[]
+        
+    train_split = celeba.split('training'  , drop_zero=True)
+    valid_split = celeba.split('validation', drop_zero=True) 
+           
+    images = []
+    newImages=[]
+
+    numSamples = Train_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()
+    
+    for numImage, filename in enumerate(os.listdir(folder),start=0):
+      if numImage == numSamples:
+        break
+      if filename in train_split.index:
+        
+        ##################################################
+        image = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image = image.convert('RGB')
+        array_Image = asarray(image)
+ 
+	    # detect face in the image
+        faces = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1, y1, width, height = faces[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1, y1 = abs(x1), abs(y1)
+          # convert into coordinates
+          x2, y2 = x1 + width, y1 + height
+          # retrieve face pixels
+          face_pixels = array_Image[y1:y2, x1:x2]
+          # resize pixels to the model size
+          image = Image.fromarray(face_pixels)
+          image = image.resize(required_size)
+          face_array = asarray(image)
+          
+          if face_array is not None:
+            newImages.append(face_array)
+            print(len(newImages), (np.array(newImages)).shape)
+    
+    CelebA_images_Train = np.array(newImages)
+    
+    images_val = []
+    newImages_val=[]
+
+    numSamples = Test_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()        
+    
+    for numImage_val, filename_val in enumerate(os.listdir(folder),start=0):
+      if numImage_val == numSamples:
+        break
+      if filename_val in valid_split.index:
+        
+        ##################################################
+        image_val = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image_val = image_val.convert('RGB')
+        array_Image_val = asarray(image_val)
+
+	    # detect face in the image
+        faces_val = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces_val) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1_val, y1_val, width_val, height_val = faces_val[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1_val, y1_val = abs(x1_val), abs(y1_val)
+          # convert into coordinates
+          x2_val, y2_val = x1_val + width_val, y1_val + height_val
+          # retrieve face pixels
+          face_pixels_val = array_Image_val[y1_val:y2_val, x1_val:x2_val]
+          # resize pixels to the model size
+          image_val = Image.fromarray(face_pixels_val)
+          image_val = image_val.resize(required_size)
+          face_array_val = asarray(image)
+          
+          if face_array_val is not None:
+            newImages_val.append(face_array_val)
+            print(len(newImages_val), (np.array(newImages_val)).shape)
+              
+    CelebA_images_Test = np.array(newImages_val)      
+    
+    dim1_train_samples, dim2_train_samx, dim3_train_samy, dim4_train_channels = CelebA_images_Train.shape
+    x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
+    
+    x_test = np.zeros((1,64,64,3))
+    
+    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Smiling_Woman/'
+    if not os.path.exists(folderName):
+        os.makedirs(folderName)
+        
+    imgWidth = 64
+    imgHeight= 64
+    
+    ## Training model.
+    img_shape = (imgWidth, imgHeight, 3)
+    latent_Vector = np.ones((1,100))
+    epochs = Global_Epoch
+    dcgan = DCGAN(img_shape, epochs, FT=faceType)       
+    dcgan.train()
+    
+    latent_Vector_Smiling_Woman = latent_Vector
+    glo_latent_Vector_SW = latent_Vector_SW
+    
+    # End Time.
+    end = time.time() - start    
+    print("Time taken to run (seconds) for exploring the latent space. : ")
+    print(end)
+
+    #####################################################################################
+    ############################### Netural Woman #######################################
+    #####################################################################################
+    
+    layer1 = []
+    layer2 = []
+    layer3 = []
+    layer4 = []
+    
+    weights1 = []
+    weights2 = []
+    weights3 = []
+    weights4 = []
+    weights5 = []
+    
+    weights_arrayLayer1 = []
+    weights_arrayLayer2 = []
+    weights_arrayLayer3 = []
+    weights_arrayLayer4 = []
+    weights_arrayLayer5 = []
+    
+    count=0
+    
+    discrWeights =[]
+    genWeights =[]
+  
+    # Total time to run on Celeba Dataset.
+    start = time.time()    
+    
+    #####################################################################################
+    #####################################################################################
+   
+    faceType = 'Netural_Woman'
+    celeba = CelebA(selected_features=['Heavy_Makeup'], remove_Features=['Male', 'Smiling'])
+
+    #####################################################################################
+    #####################################################################################
+    
+    partition_test=[]
+       
+    train_split = celeba.split('training'  , drop_zero=True)
+    valid_split = celeba.split('validation', drop_zero=True) 
+    
+    images = []
+    newImages=[]
+
+    numSamples = Train_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()
+    
+    for numImage, filename in enumerate(os.listdir(folder),start=0):
+      if numImage == numSamples:
+        break
+      if filename in train_split.index:
+        
+        ##################################################
+        image = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image = image.convert('RGB')
+        array_Image = asarray(image)
+ 
+	    # detect face in the image
+        faces = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1, y1, width, height = faces[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1, y1 = abs(x1), abs(y1)
+          # convert into coordinates
+          x2, y2 = x1 + width, y1 + height
+          # retrieve face pixels
+          face_pixels = array_Image[y1:y2, x1:x2]
+          # resize pixels to the model size
+          image = Image.fromarray(face_pixels)
+          image = image.resize(required_size)
+          face_array = asarray(image)
+          
+          if face_array is not None:
+            newImages.append(face_array)
+            print(len(newImages), (np.array(newImages)).shape)
+            
+    
+    CelebA_images_Train = np.array(newImages)
+    
+    images_val = []
+    newImages_val=[]
+
+    numSamples = Test_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()        
+    
+    for numImage_val, filename_val in enumerate(os.listdir(folder),start=0):
+      if numImage_val == numSamples:
+        break
+      if filename_val in valid_split.index:
+        
+        ##################################################
+        image_val = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image_val = image_val.convert('RGB')
+        array_Image_val = asarray(image_val)
+
+	    # detect face in the image
+        faces_val = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces_val) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1_val, y1_val, width_val, height_val = faces_val[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1_val, y1_val = abs(x1_val), abs(y1_val)
+          # convert into coordinates
+          x2_val, y2_val = x1_val + width_val, y1_val + height_val
+          # retrieve face pixels
+          face_pixels_val = array_Image_val[y1_val:y2_val, x1_val:x2_val]
+          # resize pixels to the model size
+          image_val = Image.fromarray(face_pixels_val)
+          image_val = image_val.resize(required_size)
+          face_array_val = asarray(image)
+          
+          if face_array_val is not None:
+            newImages_val.append(face_array_val)
+            print(len(newImages_val), (np.array(newImages_val)).shape)
+          
+            
+    CelebA_images_Test = np.array(newImages_val)      
+    
+    dim1_train_samples, dim2_train_samx, dim3_train_samy, dim4_train_channels = CelebA_images_Train.shape
+    x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
+  
+    x_test = np.zeros((1,64,64,3))
+    
+    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Neutral_Woman/'
+    if not os.path.exists(folderName):
+        os.makedirs(folderName)
+        
+    imgWidth = 64
+    imgHeight= 64
+    
+    ## Training model.
+    img_shape = (imgWidth, imgHeight, 3)
+    latent_Vector = np.ones((1,100))
+    epochs = Global_Epoch
+    dcgan = DCGAN(img_shape, epochs, FT=faceType)       
+    dcgan.train()
+    
+    latent_Vector_Neutral_Woman = latent_Vector
+    glo_latent_Vector_NW = latent_Vector_NW
+
+    # End Time.
+    end = time.time() - start    
+    print("Time taken to run (seconds) for exploring the latent space. : ")
+    print(end)
+
+    #####################################################################################
+    ############################### Neutral Man #######################################
+    #####################################################################################
+    
+    layer1 = []
+    layer2 = []
+    layer3 = []
+    layer4 = []
+    
+    weights1 = []
+    weights2 = []
+    weights3 = []
+    weights4 = []
+    weights5 = []
+    
+    weights_arrayLayer1 = []
+    weights_arrayLayer2 = []
+    weights_arrayLayer3 = []
+    weights_arrayLayer4 = []
+    weights_arrayLayer5 = []
+    
+    count=0
+    
+    discrWeights =[]
+    genWeights =[]
+  
+    # Total time to run on Celeba Dataset.
+    start = time.time()    
+    
+    #####################################################################################
+    #####################################################################################
+   
+    faceType = 'Netural_Man'
+    celeba = CelebA(selected_features=['Male'], remove_Features=['Smiling', 'Heavy_Makeup'])
+
+    #####################################################################################
+    #####################################################################################
+    
+    partition_test=[]
+       
+    train_split = celeba.split('training'  , drop_zero=True)
+    valid_split = celeba.split('validation', drop_zero=True) 
+    
+    images = []
+    newImages=[]
+
+    numSamples = Train_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()
+    
+    for numImage, filename in enumerate(os.listdir(folder),start=0):
+      if numImage == numSamples:
+        break
+      if filename in train_split.index:
+        
+        ##################################################
+        image = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image = image.convert('RGB')
+        array_Image = asarray(image)
+ 
+	    # detect face in the image
+        faces = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1, y1, width, height = faces[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1, y1 = abs(x1), abs(y1)
+          # convert into coordinates
+          x2, y2 = x1 + width, y1 + height
+          # retrieve face pixels
+          face_pixels = array_Image[y1:y2, x1:x2]
+          # resize pixels to the model size
+          image = Image.fromarray(face_pixels)
+          image = image.resize(required_size)
+          face_array = asarray(image)
+          
+          if face_array is not None:
+            newImages.append(face_array)
+            print(len(newImages), (np.array(newImages)).shape)
+            
+    
+    CelebA_images_Train = np.array(newImages)
+    
+    images_val = []
+    newImages_val=[]
+
+    numSamples = Test_Sample_Size
+    required_size=(64, 64)
+    model = MTCNN()        
+    
+    for numImage_val, filename_val in enumerate(os.listdir(folder),start=0):
+      if numImage_val == numSamples:
+        break
+      if filename_val in valid_split.index:
+        
+        ##################################################
+        image_val = Image.open(os.path.join(folder,filename))
+        # convert to RGB, if needed
+        image_val = image_val.convert('RGB')
+        array_Image_val = asarray(image_val)
+
+	    # detect face in the image
+        faces_val = model.detect_faces(array_Image)
+	    # skip cases where we could not detect a face
+        faceCount = 0
+        if len(faces_val) == 0:
+          faceCount = 1
+          
+        if faceCount == 0:
+          # extract details of the face
+          x1_val, y1_val, width_val, height_val = faces_val[0]['box']
+          # force detected pixel values to be positive (bug fix)
+          x1_val, y1_val = abs(x1_val), abs(y1_val)
+          # convert into coordinates
+          x2_val, y2_val = x1_val + width_val, y1_val + height_val
+          # retrieve face pixels
+          face_pixels_val = array_Image_val[y1_val:y2_val, x1_val:x2_val]
+          # resize pixels to the model size
+          image_val = Image.fromarray(face_pixels_val)
+          image_val = image_val.resize(required_size)
+          face_array_val = asarray(image)
+          
+          if face_array_val is not None:
+            newImages_val.append(face_array_val)
+            print(len(newImages_val), (np.array(newImages_val)).shape)
+          
+    
+    CelebA_images_Test = np.array(newImages_val)      
+    
+    dim1_train_samples, dim2_train_samx, dim3_train_samy, dim4_train_channels = CelebA_images_Train.shape
+    x_train = CelebA_images_Train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
+    
+    x_test = np.zeros((1,64,64,3))
+    
+    folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Neutral_Man/'
+    if not os.path.exists(folderName):
+        os.makedirs(folderName)
+        
+    imgWidth = 64
+    imgHeight= 64
+    
+    ## Training model on LSUN Dataset.
+    img_shape = (imgWidth, imgHeight, 3)
+    latent_Vector = np.ones((1,100))
+    epochs = Global_Epoch
+    dcgan = DCGAN(img_shape, epochs, FT=faceType)      
+    dcgan.train()
+    
+    latent_Vector_Neutral_Man = latent_Vector
+
+    # End Time.
+    end = time.time() - start    
+    print("Time taken to run (seconds) for exploring the latent space. : ")
+    print(end)
+    
+    #####################################################################################
+        
+    # Ending
+    end_Overall_Time = time.time() - start_Overall_time    
+    print('Completed time to run full Code completed in seconds:')   
+    print(end_Overall_Time)
+    
+    
