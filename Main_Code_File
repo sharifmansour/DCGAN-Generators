@@ -577,7 +577,7 @@ class DCGAN:
             
             ##### Export Folder Location #####
             
-            folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Smiling_Man_Vector_Arithmetic/'
+            folderName = ''
             if not os.path.exists(folderName):
               os.makedirs(folderName)  
             
@@ -1037,7 +1037,7 @@ if __name__ == '__main__':
     ######################### Folder containing celeba data #############################
     ######################### Please use full folder path ###############################
         
-    folder = 'D:/Deep Learning/Final Project Datasets/Empirical Validation of DCGAN Capabilities/Celeba_Cropped_Align/img_celeba'    
+    folder = ''    
     
     #####################################################################################
     #####################################################################################
