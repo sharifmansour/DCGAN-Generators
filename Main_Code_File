@@ -577,12 +577,13 @@ class DCGAN:
             
             ##### Export Folder Location #####
             
-            folderName = ''
+            folderName = 'C:/Users/shari/Documents/Ryerson Masters/CP8318 - Machine Learning/Final_Project/Smiling_Man_Vector_Arithmetic/'
             if not os.path.exists(folderName):
               os.makedirs(folderName)  
             
             ################## Printing ##################
             if(i+1 == self.epochs):
+              
               if self.FaceT == 'Smiling_Woman':
                 print(self.FaceT)
                 #Grabbing tensor of images 
@@ -975,13 +976,57 @@ if __name__ == '__main__':
     genWeights =[]
     
     # Global Variables
-    Train_Sample_Size = 10000
-    Test_Sample_Size = 1000 
-    Global_Epoch = 15000
+    #Train_Sample_Size = 10000
+    #Test_Sample_Size = 1000 
+    #Global_Epoch = 15000
        
+    Train_Sample_Size = 100
+    Test_Sample_Size = 100 
+    Global_Epoch = 100
+    
     latent_Vector_SW = np.ones((1,100))
     latent_Vector_NW = np.ones((1,100))
     latent_Vector_NM = np.ones((1,100))
+    
+    #####################################################################################
+    ########################## TEST Dataset - 64x64 #####################################
+    #####################################################################################   
+
+    # Size of generator and discriminator layers. 
+
+    dis_layers = [64,64,128,256]
+    gen_layers = [512,256,128,3]
+    
+    #Used to make sure the image width/height is divisible by In_out_gen_dis[0]* In_out_gen_dis[1] * dis_layers[3] AND In_out_gen_dis[0]* In_out_gen_dis[1] * gen_layers[0]. 
+    # For example, 8*8*256 = 16384 and then 16384 / 32 = 512. Also to need to make sure that image width/height is divisible by In_out_gen_dis[0] or In_out_gen_dis[1].
+    # 32x32 works with 8,8
+    In_out_gen_dis = [16,16,512]
+    
+    # Determining the new image size.
+    imgWidth = 64
+    imgHeight= 64
+
+    # Folder for LSUN testing dataset. 
+    folderName = 'LSUN_Samples_TESTING/'
+    if not os.path.exists(folderName):
+        os.makedirs(folderName)
+    
+    #numSamples = 100000 USED THIS FOR LAST TRAINING
+    numSamples = 1000
+    imgsLSUN_train = load_images_from_folder("D:/Deep Learning/Final Project Datasets/Adversarial Training/LSUN/bedroom_train_lmdb/bedroom_train_lmdb/data")
+    dim1_train_samples, dim2_train_samx, dim3_train_samy, dim4_train_channels = imgsLSUN_train.shape
+    x_train = imgsLSUN_train[:,:,:,:].reshape((dim1_train_samples,dim2_train_samx,dim3_train_samy,3))
+
+    numSamples = 100  
+    imgsLSUN_test = load_images_from_folder("D:/Deep Learning/Final Project Datasets/Adversarial Training/LSUN/bedroom_val_lmdb/bedroom_val_lmdb/data")
+    dim1_test_samples, dim2_test_samx, dim3_test_samy, dim4_test_channels = imgsLSUN_test.shape
+    x_test = imgsLSUN_test[:,:,:,:].reshape((dim1_test_samples,dim2_test_samx,dim3_test_samy,3))
+    
+    ## Training model on LSUN Dataset.
+    img_shape = (imgWidth, imgHeight, 3)
+    epochs = 1
+    dcgan = DCGAN(img_shape, epochs, FT='none')       
+    dcgan.train()
     
     #####################################################################################
     ############################### Celeba Dataset ######################################
@@ -1037,7 +1082,7 @@ if __name__ == '__main__':
     ######################### Folder containing celeba data #############################
     ######################### Please use full folder path ###############################
         
-    folder = ''    
+    folder = 'D:/Deep Learning/Final Project Datasets/Empirical Validation of DCGAN Capabilities/Celeba_Cropped_Align/img_celeba'    
     
     #####################################################################################
     #####################################################################################
@@ -1487,4 +1532,5 @@ if __name__ == '__main__':
     end_Overall_Time = time.time() - start_Overall_time    
     print('Completed time to run full Code completed in seconds:')   
     print(end_Overall_Time)
+    
     
