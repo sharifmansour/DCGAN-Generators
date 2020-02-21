@@ -1007,7 +1007,7 @@ if __name__ == '__main__':
     imgHeight= 64
 
     # Folder for LSUN testing dataset. 
-    folderName = 'LSUN_Samples_TESTING/'
+    folderName = ''
     if not os.path.exists(folderName):
         os.makedirs(folderName)
     
