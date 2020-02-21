@@ -6,7 +6,7 @@ The following code is meant to recreate the outcome from the original deep convo
 - Was run using tensorflow 2.0.0 and cuda 10.2. 
 - Provided file should be fine to run on it's own and can be run easily through Spyder (Python 3.6).
 - Please be mindful to update the folder path for the newly created images and training data. Begin by updating the folder location of the training data, then edit the location of the output images created. Output folder path found at line 580. Data folder path found at line 1085.
-- To aid with initializing the cuDNN tensor graphs a simple LSUN bedrooms DCGAN model was included to test the architecture. I found this also help better understand the model. LSUN dataset can be found at the following URL: https://www.yf.io/p/lsun . Only the bedroom dataset was used but feel free to try other datasets if you like. 
+- To aid with initializing the cuDNN tensor graphs a simple LSUN bedrooms DCGAN model was included to test the architecture. I found this also help better understand the model. LSUN dataset can be found at the following URL: https://www.yf.io/p/lsun . Only the bedroom dataset was used but feel free to try other datasets if you like. Line 1010 is the folder location for LSUN data
 - Training data source will be provided for download.
 - Data can be downloaded at: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
 - Please download the align and cropped images.
