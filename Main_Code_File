@@ -5,7 +5,7 @@ Created on Sat Dec 7 11:57:42 2019
 @author: Sharif Mansour (500572387)
 @project: Exploring the Latent Space of DCGAN generators.
 @File: Main Code File
-@Paper:
+@Paper: Deep Convolutional Generative Adversarial Network
 
 Copyright - Code below has been either created or modified through ideas found on blog posts or Google Tensorflow documentation.
 
